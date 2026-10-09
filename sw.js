@@ -1,6 +1,6 @@
 // Service worker: solo cachea la carcasa de la app (para abrir sin cobertura).
 // Nunca cachea las llamadas al gateway (datos de clientes).
-const CACHE = 'agente-v1';
+const CACHE = 'agente-v2';
 const SHELL = ['./', 'index.html', 'app.js', 'manifest.webmanifest', 'icon-192.png', 'apple-touch-icon.png'];
 
 self.addEventListener('install', (e) => {

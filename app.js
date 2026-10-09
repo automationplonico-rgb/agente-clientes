@@ -150,6 +150,15 @@ function openSheet(c) {
       h('a', { href: 'https://wa.me/' + c.phone.replace(/\D/g, ''), textContent: '💬 WhatsApp' })),
     h('div', { textContent: 'Etapa', style: 'color:var(--mu);font-size:13px;margin-top:6px' }),
     stageBtns, noteIn,
+    // Archivar = resolver la conversación: sale de la lista pero el cliente y su Deal siguen en el CRM
+    isNew ? null : h('button', { className: 'btn sec', style: 'color:var(--err)', textContent: 'Quitar de mi lista', onclick: async () => {
+      if (!confirm(`¿Quitar a ${c.name || c.phone} de tu lista?\n\nNo se borra: el cliente y su negocio siguen en el CRM.`)) return;
+      try {
+        await gateway('archive', { conversation_id: c.conversation_id });
+        data.clients = data.clients.filter((x) => x.conversation_id !== c.conversation_id);
+        bg.remove(); renderList(); toast('Quitado de tu lista');
+      } catch (e) { if (e.message !== 'auth') toast('No se pudo quitar (¿sin conexión?)', true); }
+    } }),
     h('button', { className: 'btn sec', textContent: 'Cerrar', onclick: () => bg.remove() })
   );
   bg.append(sheet); document.body.append(bg);
