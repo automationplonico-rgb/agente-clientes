@@ -9,12 +9,22 @@ const $app = document.getElementById('app');
 const store = {
   get: (k) => { try { return localStorage.getItem(k); } catch { return null; } },
   set: (k, v) => { try { localStorage.setItem(k, v); } catch {} },
-  del: (k) => { try { localStorage.removeItem(k); } catch {} }
+  del: (k) => { try { localStorage.removeItem(k); } catch {} if (k === KEY_STORAGE) idbPutKey(null); }
 };
+
+// El service worker no ve localStorage: la clave del agente se copia a IndexedDB para que pueda pedir los avisos con la app cerrada
+function idbPutKey(v) {
+  try {
+    const r = indexedDB.open('agente', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('kv');
+    r.onsuccess = () => { const t = r.result.transaction('kv', 'readwrite'), o = t.objectStore('kv'); if (v) o.put(v, 'agent_key'); else { o.delete('agent_key'); o.delete('last_msg'); } };
+  } catch {}
+}
 let cfg = null;       // { stages, services, home_services, agent }
 let data = null;      // { clients }
 let tab = ['servicios', 'seguimiento'].includes(store.get(TAB_STORAGE)) ? store.get(TAB_STORAGE) : 'mudanzas';
 const FU_URL = API_URL.replace(/agent-api$/, 'agent-followups');
+const PUSH_URL = API_URL.replace(/agent-api$/, 'agent-push');
 let fu = null;        // { items, rules } de AGENT-FOLLOWUPS
 
 // ---------- utilidades ----------
@@ -264,10 +274,13 @@ function start() {
   // Enlace de activación: #k=CLAVE (se borra de la URL al leerlo)
   const m = location.hash.match(/k=([^&]+)/);
   if (m) { store.set(KEY_STORAGE, decodeURIComponent(m[1])); history.replaceState(null, '', location.pathname); }
+  if (location.hash === '#seguimiento') { tab = 'seguimiento'; store.set(TAB_STORAGE, tab); history.replaceState(null, '', location.pathname); }
   if (!store.get(KEY_STORAGE)) return showLogin();
+  idbPutKey(store.get(KEY_STORAGE));
   $app.replaceChildren(h('div', { className: 'empty', textContent: 'Cargando…' }));
   loadList(true).then(flushQueue);
   loadFollowups(true);
+  syncPush();
 }
 
 window.addEventListener('online', flushQueue);
@@ -305,6 +318,43 @@ function blinkTitle(n) {
   let on = false; titleTimer = setInterval(() => { on = !on; document.title = on ? '⏰ ' + n + ' vencidos' : 'Mis clientes'; }, 1000);
 }
 
+// ---------- Web Push: avisos con la app cerrada (iPhone con la app instalada, Android, Chrome) ----------
+const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const isStandalone = () => window.navigator.standalone === true || (window.matchMedia && matchMedia('(display-mode: standalone)').matches);
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+const pushOn = () => store.get('push_on') === '1' && 'Notification' in window && Notification.permission === 'granted';
+const keyBytes = (b64) => { const p = '='.repeat((4 - (b64.length % 4)) % 4), raw = atob((b64 + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(raw, (c) => c.charCodeAt(0)); };
+async function pushSubscribeToServer(sub) {
+  const j = sub.toJSON();
+  await api('push_subscribe', { endpoint: sub.endpoint, p256dh: j.keys.p256dh, auth: j.keys.auth, ua: navigator.userAgent.slice(0, 120) }, PUSH_URL);
+}
+async function enablePush() {
+  try {
+    unlockAudio();
+    if ((await Notification.requestPermission()) !== 'granted') return toast('Sin permiso de notificaciones: actívalo en los ajustes del teléfono', true);
+    const reg = await navigator.serviceWorker.ready;
+    const { public_key } = await api('push_key', {}, PUSH_URL);
+    const sub = (await reg.pushManager.getSubscription()) || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(public_key) });
+    await pushSubscribeToServer(sub);
+    store.set('push_on', '1'); toast('Avisos activados ✓'); beep(true); if (data) renderList();
+  } catch (e) { if (e.message !== 'auth') toast('No se pudieron activar los avisos: ' + (e.message || e), true); }
+}
+async function disablePush() {
+  try {
+    const reg = await navigator.serviceWorker.ready, sub = await reg.pushManager.getSubscription();
+    if (sub) { await api('push_unsubscribe', { endpoint: sub.endpoint }, PUSH_URL); await sub.unsubscribe(); }
+  } catch (e) { /* sin conexión: se limpia solo cuando el servicio de push rechace la suscripción */ }
+  store.del('push_on'); toast('Avisos desactivados'); if (data) renderList();
+}
+// En cada arranque se vuelve a registrar la suscripción (el servidor la guarda por endpoint, sin duplicados)
+async function syncPush() {
+  if (!pushSupported() || store.get('push_on') !== '1' || Notification.permission !== 'granted') return;
+  try {
+    const reg = await navigator.serviceWorker.ready, sub = await reg.pushManager.getSubscription();
+    if (sub) await pushSubscribeToServer(sub); else { store.del('push_on'); if (data) renderList(); }
+  } catch (e) { /* se reintenta en el siguiente arranque */ }
+}
+
 async function loadFollowups(silent) {
   try { fu = await api('fu_list', {}, FU_URL); if (!silent && tab === 'seguimiento' && data) renderList(); }
   catch (e) { if (e.message !== 'auth' && !fu) fu = { items: [], rules: FU.DEFAULT_RULES, error: e.message }; }
@@ -318,13 +368,13 @@ function fuTick() {
     ring.forEach((i) => { rang[i.conversation_id] = now; });
     store.set('fu_rang', JSON.stringify(rang));
     beep(false); toast('⏰ ' + ring[0].name + ' · ' + FU.kindText(ring[0].kind) + (ring.length > 1 ? ' (+' + (ring.length - 1) + ')' : ''));
-    notify('Seguimiento: ' + ring[0].name, FU.kindText(ring[0].kind));
+    if (!pushOn()) notify('Seguimiento: ' + ring[0].name, FU.kindText(ring[0].kind));
   }
   const shown = shownGet();
   for (const kind of FU.digestsToShow(now, rules, shown)) {
     shown[kind] = FU.shownKey(kind, now);
     const sum = FU.digestSummary(kind, fu.items, now, rules);
-    if (sum.count || kind === 'morning') { if (!ring.length) beep(true); toast(sum.title + ': ' + sum.lines[0]); notify(sum.title, sum.lines.join(' · ')); }
+    if (sum.count || kind === 'morning') { if (!ring.length) beep(true); toast(sum.title + ': ' + sum.lines[0]); if (!pushOn()) notify(sum.title, sum.lines.join(' · ')); }
   }
   store.set('fu_shown', JSON.stringify(shown));
   if (data && !document.querySelector('.sheet-bg')) renderList();   // refresca contadores sin pisar una hoja abierta
@@ -334,7 +384,10 @@ function fuBar() {
   const due = fuDue();
   const items = [];
   if (due.length) items.push(h('div', { className: 'fubar', textContent: '⏰ ' + due.length + ' seguimiento(s) vencido(s) — toca para verlos', onclick: () => { tab = 'seguimiento'; store.set(TAB_STORAGE, tab); renderList(); } }));
-  if ('Notification' in window && Notification.permission === 'default') items.push(h('div', { className: 'fubar ok', textContent: '🔔 Toca aquí para activar los avisos del teléfono', onclick: () => Notification.requestPermission().then(() => { unlockAudio(); beep(true); renderList(); }) }));
+  if (!pushOn()) {
+    if (pushSupported()) items.push(h('div', { className: 'fubar ok', textContent: '🔔 Toca aquí para activar los avisos con sonido (llegan aunque la app esté cerrada)', onclick: () => enablePush() }));
+    else if (isIOS() && !isStandalone()) items.push(h('div', { className: 'fubar ok', textContent: '📲 En iPhone: pulsa Compartir → "Añadir a pantalla de inicio", abre la app desde ese icono y activa los avisos.' }));
+  }
   return h('div', {}, items);
 }
 
@@ -346,7 +399,8 @@ function renderFollowups() {
   $app.replaceChildren(
     h('header', {}, h('h1', { textContent: 'Seguimiento' }), h('button', { textContent: '⟳', title: 'Actualizar', onclick: () => loadFollowups() })),
     h('main', {}, h('div', { id: 'banner', className: 'banner' }), fuBar(), tabsBar(),
-      h('div', { className: 'hint', textContent: 'Cada seguimiento se cierra con un resultado. El sonido solo funciona con la app abierta.' }),
+      h('div', { className: 'hint', textContent: 'Cada seguimiento se cierra con un resultado.' + (pushOn() ? '' : ' Sin avisos activados el sonido solo funciona con la app abierta.') }),
+      pushOn() ? h('div', { className: 'hint' }, '🔔 Avisos con sonido activados ✓ ', h('a', { href: '#', textContent: 'desactivar', onclick: (e) => { e.preventDefault(); disablePush(); } })) : null,
       !fu ? h('div', { className: 'empty', textContent: 'Cargando…' }) : fu.error && !items.length ? h('div', { className: 'empty', textContent: 'No se pudo cargar el seguimiento.' }) : items.length ? cards : h('div', { className: 'empty', textContent: 'Nada que seguir ahora mismo 🎉' })));
   renderBanner();
 }
