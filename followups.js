@@ -1,7 +1,7 @@
 // Lógica pura de los recordatorios de seguimiento (sin DOM ni chrome.*): la usan el service worker, el panel, el popup, la PWA y las pruebas.
 // Los tiempos son segundos Unix (como los devuelve AGENT-FOLLOWUPS); las reglas (`rules`) vienen del servidor.
 (function (root) {
-  const DEFAULT_RULES = { working_hours: [9, 18], nag_seconds: 3600, stale_stage_seconds: 3 * 86400,
+  const DEFAULT_RULES = { working_hours: [9, 18], nag_seconds: 7200, stale_stage_seconds: 3 * 86400,
     digests: { morning: "09:00", evening: "17:30", weekly_day: 1, weekly_time: "09:15", friday_cleanup: "16:00" } };
   const TZ = "Europe/London";
   const WEEKDAYS = { Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6, Sun: 7 };
@@ -29,16 +29,16 @@
   }
   function staleItems(items, now, rules) {
     const r = rulesOf(rules);
-    return (items || []).filter((i) => i.stage_since && now - i.stage_since > r.stale_stage_seconds).sort((a, b) => a.stage_since - b.stage_since);
+    return (items || []).filter((i) => i.stage_since && !/^(task_|review_)/.test(String(i.kind)) && now - i.stage_since > r.stale_stage_seconds).sort((a, b) => a.stage_since - b.stage_since);
   }
 
   // ¿Suena este aviso ahora? lastRang = { [conversation_id]: segundos del último sonido }.
-  // Primer sonido tras vencer: siempre. Insistencia: cada nag_seconds y solo en horario laboral.
+  // Primer sonido tras vencer: siempre. Si nadie lo atiende, UN solo recordatorio nag_seconds después (solo en horario laboral); luego solo los resúmenes.
   function shouldRing(item, now, lastRang, rules) {
     if (!isDue(item, now)) return false;
     const r = rulesOf(rules), last = Number((lastRang || {})[item.conversation_id]) || 0;
     if (last < item.due_at) return true;
-    return inWorkingHours(now, r) && now - last >= r.nag_seconds;
+    return last - item.due_at < 3600 && inWorkingHours(now, r) && now - last >= r.nag_seconds;
   }
 
   // Resúmenes pendientes de mostrar. shown = { morning:'2026-10-14', evening:'…', weekly:'2026-10-12', friday:'…' } (claves de "ya mostrado").
@@ -67,7 +67,15 @@
     }
   }
 
-  const KIND_TEXT = { stage: "Actualiza la etapa", followup: "Toca hacer seguimiento", close_out: "Sin respuesta: ciérralo (ganado, perdido o amplía el plazo)" };
+  // Resultados que se ofrecen para un aviso: el servidor indica en qué tipos de aviso sirve cada uno (kinds)
+  function outcomesFor(item, rules) {
+    const list = (rules && rules.outcomes) || [];
+    return list.filter((o) => (!o.kinds || o.kinds.includes(item.kind)) && !(o.code === "call" && item.has_call));
+  }
+
+  const KIND_TEXT = { stage: "Actualiza la etapa", followup: "Toca hacer seguimiento", close_out: "Sin respuesta: ciérralo (ganado, perdido o amplía el plazo)",
+    review_request: "Trabajo completado: pide la review al cliente", review_check: "¿El cliente ya publicó la review?",
+    task_quote: "El supervisor pide: envía la cotización por escrito", task_reclaim: "El supervisor pide: reclama el lead en la plataforma" };
   const kindText = (k) => KIND_TEXT[k] || KIND_TEXT.followup;
   const waLink = (phone) => "https://web.whatsapp.com/send?phone=" + String(phone || "").replace(/\D/g, "");
   function dueLabel(ts, now) {
@@ -81,6 +89,16 @@
     const f = form || {};
     const titleOf = ((outcomes || []).find((o) => o.code === outcome) || {}).title || outcome;
     const text = String(f.text || "").trim().slice(0, 500);
+    if (outcome === "call") {   // pasar al supervisor: la solicitud va por AGENT-SUPERVISOR (no duplica la cola y avisa al supervisor)
+      const n = Number(f.attempt) || 0;
+      return { err: "", update: null, call_request: { note: "Sin respuesta" + (n ? " tras " + n + " mensajes" : "") + (text ? ". " + text : ""), urgent: false }, done: { outcome: "call" } };
+    }
+    if (outcome === "quote_sent_done" || outcome === "reclaimed") return { err: "", update: null, done: { outcome, ...(text ? { note: text } : {}) } };   // el servidor quita la etiqueta de tarea, pone la etapa y deja la nota
+    if (outcome === "review_asked" || outcome === "review_published" || outcome === "review_declined" || outcome === "review_not_yet" || outcome === "review_later") {
+      const st = outcome === "review_asked" ? "review_requested" : outcome === "review_published" ? "review_published" : "";
+      const noteR = "Seguimiento: " + titleOf + (text ? " — " + text : "");
+      return { err: "", update: st || text ? { ...(st ? { stage: st } : {}), note: noteR } : null, done: { outcome } };
+    }
     const stage = outcome === "lost" ? "lead_lost" : outcome === "won" ? "lead_won" : outcome === "responded" ? f.stage || "" : "";
     const note = "Seguimiento: " + titleOf + (text ? " — " + text : "");
     const body = { outcome };
@@ -91,6 +109,6 @@
     return { err, update: outcome === "snooze" ? null : { ...(stage ? { stage } : {}), note }, done: body };
   }
 
-  const api = { DEFAULT_RULES, rulesOf, londonParts, inWorkingHours, isDue, dueItems, todayItems, staleItems, shouldRing, digestsToShow, shownKey, digestSummary, kindText, waLink, dueLabel, outcomePlan };
+  const api = { DEFAULT_RULES, rulesOf, londonParts, inWorkingHours, isDue, dueItems, todayItems, staleItems, shouldRing, digestsToShow, shownKey, digestSummary, kindText, waLink, dueLabel, outcomePlan, outcomesFor };
   if (typeof module !== "undefined") module.exports = api; else root.MVFU = api;
 })(typeof globalThis !== "undefined" ? globalThis : this);

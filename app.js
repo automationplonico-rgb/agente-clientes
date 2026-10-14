@@ -22,9 +22,11 @@ function idbPutKey(v) {
 }
 let cfg = null;       // { stages, services, home_services, agent }
 let data = null;      // { clients }
-let tab = ['servicios', 'seguimiento'].includes(store.get(TAB_STORAGE)) ? store.get(TAB_STORAGE) : 'mudanzas';
+let tab = ['servicios', 'seguimiento', 'cola', 'panel'].includes(store.get(TAB_STORAGE)) ? store.get(TAB_STORAGE) : 'mudanzas';
 const FU_URL = API_URL.replace(/agent-api$/, 'agent-followups');
 const PUSH_URL = API_URL.replace(/agent-api$/, 'agent-push');
+const SUP_URL = API_URL.replace(/agent-api$/, 'agent-supervisor');
+let isSup = false;     // el supervisor ve además la cola de llamadas y el control de agentes
 let fu = null;        // { items, rules } de AGENT-FOLLOWUPS
 
 // ---------- utilidades ----------
@@ -111,12 +113,16 @@ const hasCall = (labels) => (labels || []).includes('pending_call');
 function tabsBar(counts) {
   const c = counts || { mudanzas: data.clients.filter((x) => x.group === 'mudanzas').length, servicios: data.clients.filter((x) => x.group === 'servicios').length };
   const due = fuDue().length;
-  const names = { mudanzas: 'Mudanzas (' + c.mudanzas + ')', servicios: 'Servicios (' + c.servicios + ')', seguimiento: '⏰ Seguir' + (due ? ' (' + due + ')' : '') };
-  return h('div', { className: 'tabs' }, ['mudanzas', 'servicios', 'seguimiento'].map((g) =>
+  const calls = isSup && window.MVSUP ? window.MVSUP.count() : 0;
+  const names = { mudanzas: 'Mudanzas (' + c.mudanzas + ')', servicios: 'Servicios (' + c.servicios + ')', seguimiento: '⏰ Seguir' + (due ? ' (' + due + ')' : ''), cola: '📞 Llamadas' + (calls ? ' (' + calls + ')' : ''), panel: '👥 Agentes' };
+  return h('div', { className: 'tabs' }, ['mudanzas', 'servicios', 'seguimiento'].concat(isSup ? ['cola', 'panel'] : []).map((g) =>
     h('button', { className: g === tab ? 'on' : '', textContent: names[g], onclick: () => { tab = g; store.set(TAB_STORAGE, g); renderList(); } })));
 }
 
 function renderList() {
+  if ((tab === 'cola' || tab === 'panel') && !isSup) tab = 'mudanzas';
+  if (tab === 'cola') return window.MVSUP.renderQueue();
+  if (tab === 'panel') return window.MVSUP.renderPanel();
   if (tab === 'seguimiento') return renderFollowups();
   const clients = data.clients.filter((c) => c.group === tab);
   const counts = { mudanzas: data.clients.filter((c) => c.group === 'mudanzas').length, servicios: data.clients.filter((c) => c.group === 'servicios').length };
@@ -196,12 +202,21 @@ function sheetClient(sheet, bg, c) {
     } })));
 
     const callOn = hasCall(labels);
-    const callBtn = h('button', { className: 'btn' + (callOn ? '' : ' sec'), textContent: callOn ? '📞 Llamada pendiente con el supervisor ✓ (quitar)' : '📞 Pasar al supervisor para llamar', onclick: async () => {
-      const old = c.labels; c.labels = callOn ? old.filter((l) => l !== 'pending_call') : [...old, 'pending_call']; paint();
-      const r = await sendUpdate({ conversation_id: c.conversation_id, pending_call: !callOn });
-      if (r === false) { c.labels = old; paint(); return; }
-      toast(r === 'queued' ? 'Sin conexión: guardado para enviar' : callOn ? 'Llamada pendiente quitada ✓' : 'Pasado al supervisor ✓'); if (r === true) { loadList(true); setTimeout(loadInfo, 1500); }
-    } });
+    const askCall = async (urgent) => {   // AGENT-SUPERVISOR: no duplica la cola; si ya estaba, el supervisor recibe un aviso de "solicitud actualizada"
+      const note = prompt(urgent ? '¿Qué cambió? (el supervisor recibirá un aviso urgente)' : 'Nota para el supervisor (opcional):\n¿Qué necesita saber antes de llamar?');
+      if (note === null) return;
+      try { await api('call_request', { conversation_id: c.conversation_id, note: note.trim(), urgent }, SUP_URL);
+        if (!urgent) { c.labels = [...new Set([...(c.labels || []), 'pending_call'])]; paint(); }
+        toast(urgent ? 'Solicitud actualizada: el supervisor recibió el aviso ✓' : 'Pasado al supervisor ✓'); loadList(true); setTimeout(loadInfo, 1500); }
+      catch (e) { if (e.message !== 'auth') toast('No se pudo enviar: ' + e.message, true); }
+    };
+    const callBtn = !callOn ? h('button', { className: 'btn sec', textContent: '📞 Pasar al supervisor para llamar', onclick: () => askCall(false) })
+      : h('div', {}, h('button', { className: 'btn', textContent: '🔔 Actualizar solicitud (avisa al supervisor)', onclick: () => askCall(true) }),
+        h('button', { className: 'btn sec', textContent: '📞 En la cola del supervisor ✓ — quitar', onclick: async () => {
+          const old = c.labels; c.labels = old.filter((l) => l !== 'pending_call'); paint();
+          const r = await sendUpdate({ conversation_id: c.conversation_id, pending_call: false });
+          if (r === false) { c.labels = old; paint(); return; }
+          toast(r === 'queued' ? 'Sin conexión: guardado para enviar' : 'Llamada pendiente quitada ✓'); if (r === true) { loadList(true); setTimeout(loadInfo, 1500); } } }));
 
     const conv = info.conv, a = (conv && conv.custom_attributes) || {};
     const parts = String(a.lead_name || '').match(/^(\S+) (\S+) (\d{6}) (\S+)$/);
@@ -281,6 +296,7 @@ function start() {
   loadList(true).then(flushQueue);
   loadFollowups(true);
   syncPush();
+  loadRole();
 }
 
 window.addEventListener('online', flushQueue);
@@ -355,6 +371,11 @@ async function syncPush() {
   } catch (e) { /* se reintenta en el siguiente arranque */ }
 }
 
+async function loadRole() {
+  try { const r = await api('sup_me', {}, SUP_URL); isSup = !!r.is_supervisor; } catch (e) { return; }
+  if (isSup && window.MVSUP) { window.MVSUP.start(); if (data) renderList(); }
+}
+
 async function loadFollowups(silent) {
   try { fu = await api('fu_list', {}, FU_URL); if (!silent && tab === 'seguimiento' && data) renderList(); }
   catch (e) { if (e.message !== 'auth' && !fu) fu = { items: [], rules: FU.DEFAULT_RULES, error: e.message }; }
@@ -408,11 +429,13 @@ function renderFollowups() {
 function openFollowSheet(it) {
   const bg = h('div', { className: 'sheet-bg', style: 'display:block', onclick: (e) => e.target === bg && bg.remove() });
   const sheet = h('div', { className: 'sheet' }); bg.append(sheet); document.body.append(bg);
-  const rules = fu.rules, form = { outcome: '', text: '', stage: '', due_at: 0 };
+  const rules = fu.rules, form = { outcome: '', text: '', stage: '', due_at: 0, attempt: it.attempt };
   const paint = (err) => {
-    const outs = (rules.outcomes || []).map((o) => h('button', { className: form.outcome === o.code ? 'on' : '', textContent: o.title, onclick: () => { form.outcome = o.code; paint(); } }));
+    const outs = FU.outcomesFor(it, rules).map((o) => h('button', { className: form.outcome === o.code ? 'on' : '', textContent: o.title, onclick: () => { form.outcome = o.code; paint(); } }));
     const kids = [h('h2', { textContent: it.name || it.phone }), h('div', { className: 'ph', textContent: it.phone + ' · ' + it.stage_title + ' · ' + FU.kindText(it.kind) }),
       h('div', { className: 'acts' }, h('a', { href: 'tel:' + it.phone, textContent: '📞 Llamar' }), h('a', { href: 'https://wa.me/' + it.phone.replace(/\D/g, ''), textContent: '💬 WhatsApp' })),
+      it.suggest_call ? h('div', { className: 'fubar', textContent: 'Sin respuesta tras ' + it.attempt + ' mensajes. ¿Lo pasamos a la cola de llamadas del supervisor? Elige "Sin respuesta → que llame el supervisor".' }) : null,
+      it.has_call ? h('div', { className: 'hint', textContent: '📞 Ya está en la cola de llamadas del supervisor' }) : null,
       h('div', { className: 'lbl', textContent: '¿Qué pasó?' }), h('div', { className: 'chips' }, outs)];
     if (form.outcome === 'responded') kids.push(h('div', { className: 'lbl', textContent: 'Nueva etapa' }), h('div', { className: 'chips' }, ['contacted', 'quoted', 'send_to_calendar'].map((s) =>
       h('button', { className: form.stage === s ? 'on' : '', textContent: (rules.stage_titles || {})[s] || s, onclick: () => { form.stage = s; paint(); } }))));
@@ -424,8 +447,9 @@ function openFollowSheet(it) {
     kids.push(h('div', { className: 'lbl', textContent: 'O pospón el aviso (no cierra el seguimiento)' }), h('div', { className: 'chips' }, [15, 60].map((m) => h('button', { textContent: m === 60 ? '1 hora' : m + ' min', onclick: () => finish({ outcome: 'snooze', snooze_minutes: m }, null) }))), h('button', { className: 'btn sec', textContent: 'Cerrar', onclick: () => bg.remove() }));
     sheet.replaceChildren(...kids.filter(Boolean));
   };
-  async function finish(done, update) {
+  async function finish(done, update, callReq) {
     try {
+      if (callReq) await api('call_request', { conversation_id: it.conversation_id, ...callReq }, SUP_URL);   // pasar al supervisor sin duplicar la cola
       if (update) { const r = await sendUpdate({ conversation_id: it.conversation_id, ...update }); if (r !== true) { if (r === 'queued') toast('Sin conexión: inténtalo de nuevo con red', true); return; } }
       await api('fu_done', { conversation_id: it.conversation_id, ...done }, FU_URL);
       bg.remove(); toast('Seguimiento guardado ✓'); loadFollowups(); loadList(true);
@@ -434,7 +458,7 @@ function openFollowSheet(it) {
   function submit() {
     const plan = FU.outcomePlan(form.outcome, form, rules, rules.outcomes);
     if (plan.err) return paint(plan.err);
-    finish(plan.done, plan.update);
+    finish(plan.done, plan.update, plan.call_request);
   }
   paint();
 }
