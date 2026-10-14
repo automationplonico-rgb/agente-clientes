@@ -47,6 +47,23 @@ function normalizePhone(raw) {
   else if (!d.startsWith('+')) d = '+' + d;
   return /^\+\d{9,15}$/.test(d) ? d : null;
 }
+// Selector de fecha y hora con listas desplegables y botones rápidos: el calendario nativo de <input type="datetime-local"> no se abre en algunos móviles.
+// onChange recibe la hora elegida en segundos Unix (0 = sin elegir).
+function whenPicker(onChange) {
+  const pad = (n) => String(n).padStart(2, '0');
+  const days = Array.from({ length: 15 }, (_, i) => { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() + i); return d; });
+  const dayLabel = (d, i) => (i === 0 ? 'Hoy' : i === 1 ? 'Mañana' : d.toLocaleDateString('es', { weekday: 'short', day: '2-digit', month: 'short' }));
+  const daySel = h('select', {}, days.map((d, i) => h('option', { value: String(i), textContent: dayLabel(d, i) })));
+  const timeSel = h('select', {}, h('option', { value: '', textContent: 'Hora…' }), Array.from({ length: 57 }, (_, i) => 7 * 60 + i * 15).map((m) => h('option', { value: String(m), textContent: pad(Math.floor(m / 60)) + ':' + pad(m % 60) })));
+  const out = h('div', { className: 'hint', textContent: 'Sin hora elegida' });
+  const set = (ts) => { out.textContent = ts ? 'Elegido: ' + new Date(ts * 1000).toLocaleString('es', { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }) : 'Sin hora elegida'; onChange(ts); };
+  const fromSelects = () => { if (timeSel.value === '') return set(0); const d = new Date(days[Number(daySel.value)]); d.setMinutes(Number(timeSel.value)); set(Math.floor(d.getTime() / 1000)); };
+  daySel.addEventListener('change', fromSelects); timeSel.addEventListener('change', fromSelects);
+  const quick = (label, secs) => h('button', { textContent: label, onclick: () => set(Math.floor(Date.now() / 1000) + secs) });
+  const tomorrow9 = () => { const d = new Date(); d.setDate(d.getDate() + 1); d.setHours(9, 0, 0, 0); return Math.floor(d.getTime() / 1000); };
+  return h('div', {}, h('div', { className: 'chips' }, quick('En 15 min', 900), quick('En 1 h', 3600), quick('En 3 h', 10800), h('button', { textContent: 'Mañana 9:00', onclick: () => set(tomorrow9()) })),
+    h('div', { style: 'display:grid;grid-template-columns:1fr 1fr;gap:8px' }, daySel, timeSel), out);
+}
 const fmtDate = (t) => { try { return new Date(t * 1000).toLocaleString('es', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch { return ''; } };
 
 // ---------- API ----------
@@ -430,6 +447,7 @@ function openFollowSheet(it) {
   const bg = h('div', { className: 'sheet-bg', style: 'display:block', onclick: (e) => e.target === bg && bg.remove() });
   const sheet = h('div', { className: 'sheet' }); bg.append(sheet); document.body.append(bg);
   const rules = fu.rules, form = { outcome: '', text: '', stage: '', due_at: 0, attempt: it.attempt };
+  const whenLater = whenPicker((ts) => { form.due_at = ts; });   // se crea una vez: se conserva al cambiar de resultado
   const paint = (err) => {
     const outs = FU.outcomesFor(it, rules).map((o) => h('button', { className: form.outcome === o.code ? 'on' : '', textContent: o.title, onclick: () => { form.outcome = o.code; paint(); } }));
     const kids = [h('h2', { textContent: it.name || it.phone }), h('div', { className: 'ph', textContent: it.phone + ' · ' + it.stage_title + ' · ' + FU.kindText(it.kind) }),
@@ -439,7 +457,7 @@ function openFollowSheet(it) {
       h('div', { className: 'lbl', textContent: '¿Qué pasó?' }), h('div', { className: 'chips' }, outs)];
     if (form.outcome === 'responded') kids.push(h('div', { className: 'lbl', textContent: 'Nueva etapa' }), h('div', { className: 'chips' }, ['contacted', 'quoted', 'send_to_calendar'].map((s) =>
       h('button', { className: form.stage === s ? 'on' : '', textContent: (rules.stage_titles || {})[s] || s, onclick: () => { form.stage = s; paint(); } }))));
-    if (form.outcome === 'later') { const d = h('input', { type: 'datetime-local' }); d.addEventListener('change', () => { form.due_at = d.value ? Math.floor(new Date(d.value).getTime() / 1000) : 0; }); kids.push(h('div', { className: 'lbl', textContent: 'Volver a escribirle el…' }), d); }
+    if (form.outcome === 'later') kids.push(h('div', { className: 'lbl', textContent: 'Volver a escribirle el…' }), whenLater);
     if (form.outcome) {
       const t = h('textarea', { rows: 2, placeholder: form.outcome === 'lost' ? 'Motivo (obligatorio)' : 'Nota (opcional)', value: form.text }); t.addEventListener('input', () => { form.text = t.value; });
       kids.push(t, err ? h('div', { className: 'hint', style: 'color:var(--err)', textContent: err }) : null, h('button', { className: 'btn', textContent: 'Guardar resultado', onclick: submit }));
@@ -463,6 +481,6 @@ function openFollowSheet(it) {
 }
 
 setInterval(fuTick, 30 * 1000);
-setInterval(() => store.get(KEY_STORAGE) && loadFollowups(true), 5 * 60 * 1000);
+setInterval(() => store.get(KEY_STORAGE) && loadFollowups(true), 2 * 60 * 1000);
 
 start();

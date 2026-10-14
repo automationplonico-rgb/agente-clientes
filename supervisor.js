@@ -12,7 +12,6 @@
   const sup = { queue: null, panel: null, seen: null, urgent: {}, timer: null };
   const fmt = (ts) => { try { return new Date(ts * 1000).toLocaleString('es', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' }); } catch { return ''; } };
   const dayAgo = () => Math.floor(Date.now() / 1000) - 86400;
-  const toEpoch = (v) => (v ? Math.floor(new Date(v).getTime() / 1000) : 0);
 
   async function loadQueue(silent) {
     try {
@@ -71,22 +70,22 @@
   }
 
   function resultSheet(c) {
-    const f = { result: '', note: '', until: '' };
+    const f = { result: '', note: '', ts: 0 };
     let paint;
     sheet('Registrar llamada · ' + (c.name || c.phone), (bg) => {
       const box = h('div');
+      const when = whenPicker((ts) => { f.ts = ts; });   // se crea una vez: se conserva la hora elegida al cambiar de resultado
       paint = (err) => {
         const chips = h('div', { className: 'chips' }, RESULTS.map((r) => h('button', { className: f.result === r.code ? 'on' : '', textContent: r.title, onclick: () => { f.result = r.code; paint(); } })));
         const note = h('textarea', { rows: 3, placeholder: f.result === 'send_quote' ? 'Qué cotización / datos debe enviar el agente' : 'Nota de la llamada', value: f.note }); note.addEventListener('input', () => { f.note = note.value; });
-        const until = h('input', { type: 'datetime-local', value: f.until }); until.addEventListener('change', () => { f.until = until.value; });
         box.replaceChildren(h('div', {}, h('div', { className: 'lbl', textContent: 'Resultado' }), chips,   // h() descarta los null: replaceChildren los pintaría como el texto "null"
           f.result ? h('div', { className: 'hint', textContent: HINTS[f.result] }) : null,
-          f.result === 'follow_up' ? [h('div', { className: 'lbl', textContent: 'Volver a llamar el… (opcional)' }), until] : null,
+          f.result === 'follow_up' ? [h('div', { className: 'lbl', textContent: 'Volver a llamar el… (opcional)' }), when] : null,
           h('div', { className: 'lbl', textContent: 'Nota (la ve el agente en el chat)' }), note,
           err ? h('div', { className: 'hint', style: 'color:var(--err)', textContent: err }) : null,
           h('button', { className: 'btn', textContent: 'Guardar y avisar al agente', onclick: async () => {
             if (!f.result) return paint('Elige el resultado de la llamada.');
-            const until = f.result === 'follow_up' ? toEpoch(f.until) : 0;
+            const until = f.result === 'follow_up' ? f.ts : 0;
             if (until && until < Date.now() / 1000 + 120) return paint('La fecha tiene que ser futura.');
             try { await api('sup_result', { conversation_id: c.conversation_id, result: f.result, note: f.note.trim(), ...(until ? { until } : {}) }, SUP_URL); bg.remove(); toast('Llamada registrada ✓ (el agente recibió el aviso)'); loadQueue(); }
             catch (e) { if (e.message !== 'auth') paint('No se pudo guardar: ' + e.message); }
@@ -98,15 +97,14 @@
   }
 
   function postponeSheet(c) {
-    const f = { until: '', note: '' };
+    const f = { ts: 0, note: '' };
     sheet('Posponer · ' + (c.name || c.phone), (bg) => {
-      const until = h('input', { type: 'datetime-local' }); until.addEventListener('change', () => { f.until = until.value; });
+      const when = whenPicker((ts) => { f.ts = ts; });
       const note = h('textarea', { rows: 2, placeholder: 'Motivo (opcional, lo ve el agente)' }); note.addEventListener('input', () => { f.note = note.value; });
       const err = h('div', { className: 'hint', style: 'color:var(--err)' });
-      const quick = (label, secs) => h('button', { textContent: label, onclick: () => { const d = new Date(Date.now() + secs * 1000); d.setMinutes(d.getMinutes() - d.getTimezoneOffset()); until.value = d.toISOString().slice(0, 16); f.until = until.value; } });
-      return [h('div', { className: 'lbl', textContent: 'Volver a llamar el…' }), h('div', { className: 'chips' }, [quick('En 1 h', 3600), quick('En 3 h', 10800), quick('Mañana', 86400)]), until, note, err,
+      return [h('div', { className: 'lbl', textContent: 'Volver a llamar el…' }), when, note, err,
         h('button', { className: 'btn', textContent: 'Posponer y avisar al agente', onclick: async () => {
-          const ts = toEpoch(f.until); if (!ts || ts < Date.now() / 1000 + 120) { err.textContent = 'Elige una fecha futura.'; return; }
+          const ts = f.ts; if (!ts || ts < Date.now() / 1000 + 120) { err.textContent = 'Elige una hora al menos 2 minutos en el futuro.'; return; }
           try { await api('sup_postpone', { conversation_id: c.conversation_id, until: ts, note: f.note.trim() }, SUP_URL); bg.remove(); toast('Llamada pospuesta ✓ (el agente recibió el aviso)'); loadQueue(); }
           catch (e) { if (e.message !== 'auth') err.textContent = 'No se pudo posponer: ' + e.message; }
         } }), h('button', { className: 'btn sec', textContent: 'Cerrar', onclick: () => bg.remove() })];
