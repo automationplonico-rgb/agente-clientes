@@ -447,9 +447,8 @@ function openFollowSheet(it) {
     kids.push(h('div', { className: 'lbl', textContent: 'O pospón el aviso (no cierra el seguimiento)' }), h('div', { className: 'chips' }, [15, 60].map((m) => h('button', { textContent: m === 60 ? '1 hora' : m + ' min', onclick: () => finish({ outcome: 'snooze', snooze_minutes: m }, null) }))), h('button', { className: 'btn sec', textContent: 'Cerrar', onclick: () => bg.remove() }));
     sheet.replaceChildren(...kids.filter(Boolean));
   };
-  async function finish(done, update, callReq) {
+  async function finish(done, update) {
     try {
-      if (callReq) await api('call_request', { conversation_id: it.conversation_id, ...callReq }, SUP_URL);   // pasar al supervisor sin duplicar la cola
       if (update) { const r = await sendUpdate({ conversation_id: it.conversation_id, ...update }); if (r !== true) { if (r === 'queued') toast('Sin conexión: inténtalo de nuevo con red', true); return; } }
       await api('fu_done', { conversation_id: it.conversation_id, ...done }, FU_URL);
       bg.remove(); toast('Seguimiento guardado ✓'); loadFollowups(); loadList(true);
@@ -458,7 +457,7 @@ function openFollowSheet(it) {
   function submit() {
     const plan = FU.outcomePlan(form.outcome, form, rules, rules.outcomes);
     if (plan.err) return paint(plan.err);
-    finish(plan.done, plan.update, plan.call_request);
+    finish(plan.done, plan.update);
   }
   paint();
 }

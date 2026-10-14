@@ -79,7 +79,7 @@
         const chips = h('div', { className: 'chips' }, RESULTS.map((r) => h('button', { className: f.result === r.code ? 'on' : '', textContent: r.title, onclick: () => { f.result = r.code; paint(); } })));
         const note = h('textarea', { rows: 3, placeholder: f.result === 'send_quote' ? 'Qué cotización / datos debe enviar el agente' : 'Nota de la llamada', value: f.note }); note.addEventListener('input', () => { f.note = note.value; });
         const until = h('input', { type: 'datetime-local', value: f.until }); until.addEventListener('change', () => { f.until = until.value; });
-        box.replaceChildren(h('div', { className: 'lbl', textContent: 'Resultado' }), chips,
+        box.replaceChildren(h('div', {}, h('div', { className: 'lbl', textContent: 'Resultado' }), chips,   // h() descarta los null: replaceChildren los pintaría como el texto "null"
           f.result ? h('div', { className: 'hint', textContent: HINTS[f.result] }) : null,
           f.result === 'follow_up' ? [h('div', { className: 'lbl', textContent: 'Volver a llamar el… (opcional)' }), until] : null,
           h('div', { className: 'lbl', textContent: 'Nota (la ve el agente en el chat)' }), note,
@@ -91,7 +91,7 @@
             try { await api('sup_result', { conversation_id: c.conversation_id, result: f.result, note: f.note.trim(), ...(until ? { until } : {}) }, SUP_URL); bg.remove(); toast('Llamada registrada ✓ (el agente recibió el aviso)'); loadQueue(); }
             catch (e) { if (e.message !== 'auth') paint('No se pudo guardar: ' + e.message); }
           } }),
-          h('button', { className: 'btn sec', textContent: 'Cerrar', onclick: () => bg.remove() }));
+          h('button', { className: 'btn sec', textContent: 'Cerrar', onclick: () => bg.remove() })));
       };
       paint(); return [box];
     });

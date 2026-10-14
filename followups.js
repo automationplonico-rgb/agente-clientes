@@ -89,10 +89,8 @@
     const f = form || {};
     const titleOf = ((outcomes || []).find((o) => o.code === outcome) || {}).title || outcome;
     const text = String(f.text || "").trim().slice(0, 500);
-    if (outcome === "call") {   // pasar al supervisor: la solicitud va por AGENT-SUPERVISOR (no duplica la cola y avisa al supervisor)
-      const n = Number(f.attempt) || 0;
-      return { err: "", update: null, call_request: { note: "Sin respuesta" + (n ? " tras " + n + " mensajes" : "") + (text ? ". " + text : ""), urgent: false }, done: { outcome: "call" } };
-    }
+    // pasar al supervisor: lo hace el servidor al cerrar el seguimiento (etiqueta, cola sin duplicar, nota y aviso), sea cual sea la versión del cliente
+    if (outcome === "call") return { err: "", update: null, done: { outcome: "call", ...(text ? { note: text } : {}) } };
     if (outcome === "quote_sent_done" || outcome === "reclaimed") return { err: "", update: null, done: { outcome, ...(text ? { note: text } : {}) } };   // el servidor quita la etiqueta de tarea, pone la etapa y deja la nota
     if (outcome === "review_asked" || outcome === "review_published" || outcome === "review_declined" || outcome === "review_not_yet" || outcome === "review_later") {
       const st = outcome === "review_asked" ? "review_requested" : outcome === "review_published" ? "review_published" : "";
