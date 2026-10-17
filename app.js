@@ -298,7 +298,7 @@ function sheetClient(sheet, bg, c) {
 let cannedCache = { at: 0, list: [] };
 async function loadCanned() {
   if (Date.now() - cannedCache.at < 10 * 60 * 1000) return cannedCache.list;
-  try { const r = await api('canned'); cannedCache = { at: Date.now(), list: r.canned || [] }; } catch (e) { /* bastan las plantillas incluidas */ }
+  try { const r = await api('canned'); cannedCache = { at: Date.now(), list: r.canned || [] }; } catch (e) { return []; }   // sin conexion: se reintenta al abrir de nuevo
   return cannedCache.list;
 }
 async function copyText(text) {
@@ -319,7 +319,7 @@ function sheetCanned(c, info) {
   bg.append(sheet); document.body.append(bg);
   const native = cannedNative(c, info);
   const phones = (cfg && cfg.phones) || [];
-  let query = '', tool = null, list = T.STATIC.map((t) => ({ code: t.code, title: t.title, text: t.text }));
+  let query = '', tool = null, loaded = false, loadErr = '', list = [];   // los textos viven en Chatwoot y llegan por AGENT-API con la clave del agente
   const fillNative = (text) => T.fill(text, native);
 
   const form = (title, fields, values, okText, err, onOk) => {
@@ -379,10 +379,15 @@ function sheetCanned(c, info) {
     q.addEventListener('input', () => { query = q.value; fillBox(); });
     fillBox();
     sheet.replaceChildren(...head, h('div', { className: 'acts' }, h('button', { textContent: '🧮 Calculadora', onclick: () => openTool('calc') }), h('button', { textContent: '📋 Etiqueta de trabajo', onclick: () => openTool('job') })),
-      q, h('div', { className: 'lbl', textContent: 'Al pulsar se copia el texto con tu nombre y el del cliente ya puestos.' }), box, h('button', { className: 'btn sec', textContent: 'Cerrar', onclick: () => bg.remove() }));
+      q, !loaded ? h('div', { className: 'lbl', textContent: loadErr || 'Cargando respuestas…' }) : null, h('div', { className: 'lbl', textContent: 'Al pulsar se copia el texto con tu nombre y el del cliente ya puestos.' }), box, h('button', { className: 'btn sec', textContent: 'Cerrar', onclick: () => bg.remove() }));
   };
   paint();
-  loadCanned().then((srv) => { const have = new Set(list.map((t) => t.code)); list = list.concat(srv.filter((r) => !have.has(r.code)).map((r) => ({ code: r.code, title: '', text: r.text }))); if (!tool && bg.isConnected) paint(); });
+  loadCanned().then((srv) => {
+    const order = Object.keys(T.TITLES), rank = (c) => { const i = order.indexOf(c); return i < 0 ? order.length : i; };
+    list = srv.map((r) => ({ code: r.code, title: T.TITLES[r.code] || '', text: r.text })).sort((a, b) => rank(a.code) - rank(b.code));
+    loaded = true; if (!srv.length) loadErr = 'No se pudieron cargar las respuestas (¿sin conexión?).';
+    if (!tool && bg.isConnected) paint();
+  });
 }
 
 async function loadList(silent = false) {
