@@ -52,7 +52,7 @@
       c.note ? h('div', { className: 'note', textContent: '📝 ' + c.note }) : null,
       h('div', { className: 'acts' },
         h('a', { href: 'tel:' + c.phone, textContent: '📞 Llamar' }),
-        h('a', { href: c.hubspot_url, target: '_blank', rel: 'noopener noreferrer', textContent: 'HubSpot' })),
+        c.hubspot_url ? h('a', { href: c.hubspot_url, target: '_blank', rel: 'noopener noreferrer', textContent: 'HubSpot' }) : null),
       h('div', { className: 'acts' },
         h('button', { className: 'btn', style: 'margin:0', textContent: 'Registrar llamada', onclick: () => resultSheet(c) }),
         h('button', { className: 'btn sec', style: 'margin:0', textContent: 'Posponer', onclick: () => postponeSheet(c) })));

@@ -259,6 +259,7 @@ function sheetClient(sheet, bg, c) {
         h('a', { href: 'tel:' + c.phone, textContent: '📞 Llamar' }),
         h('a', { href: 'https://wa.me/' + c.phone.replace(/\D/g, ''), textContent: '💬 WhatsApp' })),
       lastCall ? h('div', { className: 'note call' }, h('small', { textContent: 'Última llamada del supervisor · ' + [lastCall.by, fmtDate(lastCall.at)].filter(Boolean).join(' · ') }), String(lastCall.text).replace(CALL_NOTE, '').replace(/^\s*—\s*/, '')) : null,
+      h('button', { className: 'btn sec', textContent: '💬 Respuestas rápidas', onclick: () => sheetCanned(c, info) }),
       h('div', { className: 'lbl', textContent: 'Etapa' }), stages, callBtn, svcBox, noteIn,
       h('button', { className: 'btn', textContent: 'Guardar nota', onclick: async () => {
         const t = noteIn.value.trim(); if (!t) return toast('Escribe la nota', true);
@@ -291,6 +292,97 @@ function sheetClient(sheet, bg, c) {
 
   sheet.append(h('h2', { textContent: c.name || c.phone }), h('div', { className: 'ph', textContent: c.phone }), body);
   paint(); loadInfo();
+}
+
+// ---------- Respuestas rápidas: plantillas del script de AutoHotkey + las de Chatwoot. Solo se COPIAN; el agente pega y envía en WhatsApp ----------
+let cannedCache = { at: 0, list: [] };
+async function loadCanned() {
+  if (Date.now() - cannedCache.at < 10 * 60 * 1000) return cannedCache.list;
+  try { const r = await api('canned'); cannedCache = { at: Date.now(), list: r.canned || [] }; } catch (e) { /* bastan las plantillas incluidas */ }
+  return cannedCache.list;
+}
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); }
+  catch (e) { const ta = h('textarea', { value: text, style: 'position:fixed;opacity:0' }); document.body.append(ta); ta.select(); try { document.execCommand('copy'); } catch (e2) { /* sin portapapeles */ } ta.remove(); }
+  toast('Copiado ✓ Pégalo en WhatsApp y envíalo');
+}
+function cannedNative(c, info) {
+  const a = (info.conv && info.conv.custom_attributes) || {};
+  const word = (s) => { const w = String(s || '').trim().split(/\s+/)[0] || ''; return /^lead\d+$/i.test(w) ? '' : w; };
+  const first = word(a.lead_name || c.name), me = (cfg && cfg.agent && cfg.agent.name) || '';
+  return { 'contact.name': first, 'contact.first_name': first, 'contact.last_name': '', 'contact.phone': c.phone || '', 'contact.email': '', 'agent.name': me, 'agent.first_name': me.split(' ')[0] || '', 'agent.last_name': '', 'agent.email': '', 'conversation.id': String(c.conversation_id || '') };
+}
+function sheetCanned(c, info) {
+  const T = MVTemplates;
+  const bg = h('div', { className: 'sheet-bg', style: 'display:block', onclick: (e) => e.target === bg && bg.remove() });
+  const sheet = h('div', { className: 'sheet' });
+  bg.append(sheet); document.body.append(bg);
+  const native = cannedNative(c, info);
+  const phones = (cfg && cfg.phones) || [];
+  let query = '', tool = null, list = T.STATIC.map((t) => ({ code: t.code, title: t.title, text: t.text }));
+  const fillNative = (text) => T.fill(text, native);
+
+  const form = (title, fields, values, okText, err, onOk) => {
+    const kids = [h('div', { className: 'lbl', textContent: title })];
+    for (const f of fields) {
+      const el = f.type === 'select' ? h('select', {}, (f.options || []).map((o) => h('option', { value: o.value, textContent: o.label }))) : h('input', { type: 'text', inputMode: f.type === 'number' ? 'decimal' : 'text' });
+      el.value = values[f.key] != null ? values[f.key] : (f.default || ''); values[f.key] = el.value;
+      el.addEventListener('input', () => { values[f.key] = el.value; }); el.addEventListener('change', () => { values[f.key] = el.value; });
+      kids.push(h('div', { className: 'lbl', textContent: f.label + (f.optional ? ' (opcional)' : '') }), el);
+    }
+    if (err) kids.push(h('div', { className: 'lbl', style: 'color:var(--err)', textContent: err }));
+    kids.push(h('button', { className: 'btn', textContent: okText, onclick: onOk }), h('button', { className: 'btn sec', textContent: 'Cancelar', onclick: () => { tool = null; paint(); } }));
+    return kids;
+  };
+  const openVars = (r) => {
+    const vars = T.customVars(r.text);
+    if (!vars.length) { copyText(fillNative(r.text)); return; }
+    const fields = vars.map((k) => { const v = T.VARS[k]; return phones.length && v.options === 'phones' ? { key: k, label: v.label, type: 'select', options: phones.map((p) => ({ value: p, label: p })) } : { key: k, label: v.label, type: 'text', default: v.default || '' }; });
+    tool = { kind: 'var', title: r.title || '/' + r.code, text: r.text, fields, values: {}, err: '' }; paint();
+  };
+  const openTool = (kind) => {
+    const a = (info.conv && info.conv.custom_attributes) || {};
+    tool = { kind, values: kind === 'job' ? { name: a.lead_name || c.name || '', phone: c.phone || '' } : {}, err: '' }; paint();
+  };
+  const submit = () => {
+    let text = '';
+    if (tool.kind === 'var') {
+      const miss = tool.fields.filter((f) => !String(tool.values[f.key] || '').trim()).map((f) => f.label);
+      if (miss.length) { tool.err = 'Falta: ' + miss.join(', '); return paint(); }
+      text = fillNative(T.fill(tool.text, tool.values));
+    } else {
+      const miss = T.missing(tool.kind, tool.values);
+      if (miss.length) { tool.err = 'Falta: ' + miss.join(', '); return paint(); }
+      const ref = cfg && cfg.agent && cfg.agent.ref_code;
+      if (tool.kind === 'job' && !T.refCode(ref).replace(/0/g, '')) { tool.err = 'Tu número de agente (REF) no está configurado. Pídeselo al administrador.'; return paint(); }
+      text = tool.kind === 'calc' ? T.calcMessage(tool.values) : T.jobMessage(tool.values, ref);
+      if (!text) { tool.err = 'Revisa el precio y las horas: deben ser números.'; return paint(); }
+    }
+    tool = null; paint(); copyText(text);
+  };
+  const paint = () => {
+    const head = [h('h2', { textContent: 'Respuestas rápidas' }), h('div', { className: 'ph', textContent: c.name || c.phone })];
+    if (tool) {
+      const spec = tool.kind === 'var' ? { title: tool.title, fields: tool.fields } : { title: T.FORMS[tool.kind].title, fields: T.FORMS[tool.kind].fields };
+      sheet.replaceChildren(...head, ...form(spec.title, spec.fields, tool.values, tool.kind === 'var' ? 'Copiar' : 'Copiar mensaje', tool.err, submit));
+      return;
+    }
+    const q = h('input', { placeholder: 'Buscar respuesta…', value: query });
+    const box = h('div');
+    const fillBox = () => {
+      box.replaceChildren();
+      const needle = q.value.trim().toLowerCase();
+      const items = list.filter((r) => !needle || (r.code + ' ' + r.title + ' ' + r.text).toLowerCase().includes(needle)).slice(0, 40);
+      if (!items.length) box.append(h('div', { className: 'lbl', textContent: 'Sin resultados.' }));
+      for (const r of items) box.append(h('button', { className: 'btn sec', style: 'text-align:left', onclick: () => openVars(r) }, h('b', { textContent: r.title ? r.title + ' · /' + r.code : '/' + r.code }), h('div', { className: 'lbl', textContent: r.text.slice(0, 120) })));
+    };
+    q.addEventListener('input', () => { query = q.value; fillBox(); });
+    fillBox();
+    sheet.replaceChildren(...head, h('div', { className: 'acts' }, h('button', { textContent: '🧮 Calculadora', onclick: () => openTool('calc') }), h('button', { textContent: '📋 Etiqueta de trabajo', onclick: () => openTool('job') })),
+      q, h('div', { className: 'lbl', textContent: 'Al pulsar se copia el texto con tu nombre y el del cliente ya puestos.' }), box, h('button', { className: 'btn sec', textContent: 'Cerrar', onclick: () => bg.remove() }));
+  };
+  paint();
+  loadCanned().then((srv) => { const have = new Set(list.map((t) => t.code)); list = list.concat(srv.filter((r) => !have.has(r.code)).map((r) => ({ code: r.code, title: '', text: r.text }))); if (!tool && bg.isConnected) paint(); });
 }
 
 async function loadList(silent = false) {
