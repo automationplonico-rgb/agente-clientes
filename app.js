@@ -201,6 +201,13 @@ function sheetNew(sheet, bg) {
   setTimeout(() => phoneIn.focus(), 50);
 }
 
+// Si la conversación conserva un nombre provisional ("Lead4392 ...") pero el contacto ya tiene el nombre bueno, se muestra el del contacto.
+const PLACEHOLDER = /^(Lead\d+\b|[+\d\s()-]*$)/i;
+function fixPlaceholderName(d) {
+  const c = d && d.conversation, a = c && c.custom_attributes, cn = d && d.contact && String(d.contact.name || '').trim();
+  if (a && a.lead_name && PLACEHOLDER.test(String(a.lead_name).trim()) && cn && !PLACEHOLDER.test(cn)) a.lead_name = cn;
+}
+
 function sheetClient(sheet, bg, c) {
   // Datos completos de la conversación (notas, atributos, etapa) desde AGENT-API
   const info = { conv: null, notes: [], loaded: false };
@@ -285,7 +292,7 @@ function sheetClient(sheet, bg, c) {
   async function loadInfo() {
     try {
       const r = await api('lookup', { phone: c.phone });
-      if (r.found && r.conversation) { info.conv = r.conversation; info.notes = r.notes || []; if (r.conversation.labels) c.labels = r.conversation.labels; }
+      if (r.found && r.conversation) { fixPlaceholderName(r); info.conv = r.conversation; info.notes = r.notes || []; if (r.conversation.labels) c.labels = r.conversation.labels; }
       info.loaded = true; paint();
     } catch (e) { info.loaded = true; if (e.message !== 'auth') paint(); }
   }

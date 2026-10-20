@@ -1,6 +1,6 @@
 // Service worker: cachea la carcasa de la app (para abrir sin cobertura) y recibe los avisos Web Push.
 // Nunca cachea las llamadas al gateway (datos de clientes).
-const CACHE = 'agente-v9';
+const CACHE = 'agente-v10';
 const SHELL = ['./', 'index.html', 'app.js', 'followups.js', 'templates.js', 'supervisor.js', 'manifest.webmanifest', 'icon-192.png', 'apple-touch-icon.png'];
 const PUSH_API = 'https://n8n.alchimedia.co.uk/webhook/agent-push';
 
