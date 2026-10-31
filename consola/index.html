@@ -108,6 +108,8 @@ function vAtrasados() {
 function vFlujos() {
   return [h('h2', { textContent: 'Flujos programados' }), vFlows(), h('h2', { textContent: 'Errores por flujo (24 h)' }),
     table(['Flujo', 'Veces', 'Último', 'Nodo', 'Mensaje'], data.errors_by_flow.map((e) => [e.name, pill('bad', e.count), ago(e.last), e.node, e.message]), 'Sin errores en 24 h.'),
+    h('h2', { textContent: 'Todos los flujos activos (' + (data.workflows || []).length + ')' }),
+    data.n8n_api_ok === false ? h('div', { className: 'alert warn', textContent: 'No se pudo leer la API de n8n (¿clave caducada?).' }) : table(['Flujo', 'Última ejecución', 'Resultado', 'Errores 24 h'], (data.workflows || []).map((w) => [w.name, ago(w.last), pill(w.last_status === 'success' ? 'ok' : w.last_status === 'error' ? 'bad' : 'mute', w.last_status === 'success' ? 'ok' : w.last_status), w.errors_24h ? pill('bad', w.errors_24h) : pill('ok', 0)]), 'Sin datos.'),
     h('h2', { textContent: 'Últimos errores' }), table(['Cuándo', 'Flujo', 'Nodo', 'Mensaje'], data.errors.map((e) => [ago(e.ts), e.workflow, e.node, e.message]), 'Sin errores registrados.')];
 }
 function render() {
