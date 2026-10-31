@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex,nofollow">
+<meta name="theme-color" content="#0f172a">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Consola</title>
+<style>
+  :root { --bg:#f4f5f7; --card:#fff; --tx:#111827; --mute:#6b7280; --bd:#e5e7eb; --ok:#15803d; --warn:#b45309; --bad:#b91c1c; --acc:#1d4ed8; --okbg:#dcfce7; --warnbg:#fef3c7; --badbg:#fee2e2; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg:#0b1120; --card:#131c31; --tx:#e5e7eb; --mute:#94a3b8; --bd:#243049; --ok:#4ade80; --warn:#fbbf24; --bad:#f87171; --acc:#60a5fa; --okbg:#0f2e1c; --warnbg:#3a2a07; --badbg:#3b1212; } }
+  :root[data-theme="dark"] { --bg:#0b1120; --card:#131c31; --tx:#e5e7eb; --mute:#94a3b8; --bd:#243049; --ok:#4ade80; --warn:#fbbf24; --bad:#f87171; --acc:#60a5fa; --okbg:#0f2e1c; --warnbg:#3a2a07; --badbg:#3b1212; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--tx); font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; padding-bottom:env(safe-area-inset-bottom); }
+  header { position:sticky; top:0; z-index:5; background:var(--card); border-bottom:1px solid var(--bd); padding:10px 16px; display:flex; align-items:center; gap:10px; padding-top:calc(10px + env(safe-area-inset-top)); }
+  header h1 { font-size:17px; margin:0; flex:1; }
+  header small { color:var(--mute); }
+  button { font:inherit; cursor:pointer; }
+  .iconbtn { border:1px solid var(--bd); background:var(--card); color:var(--tx); border-radius:8px; padding:6px 10px; }
+  nav { display:flex; gap:6px; padding:10px 16px 0; overflow-x:auto; max-width:1200px; margin:0 auto; }
+  nav button { border:1px solid var(--bd); background:var(--card); color:var(--tx); border-radius:999px; padding:7px 14px; white-space:nowrap; }
+  nav button.on { background:var(--acc); border-color:var(--acc); color:#fff; }
+  main { max-width:1200px; margin:0 auto; padding:12px 16px 40px; }
+  .grid { display:grid; gap:10px; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); }
+  .stat { background:var(--card); border:1px solid var(--bd); border-radius:12px; padding:12px; }
+  .stat b { display:block; font-size:26px; line-height:1.1; }
+  .stat span { color:var(--mute); font-size:13px; }
+  .stat.bad { border-color:var(--bad); } .stat.bad b { color:var(--bad); } .stat.warn b { color:var(--warn); } .stat.ok b { color:var(--ok); }
+  .alert { border-radius:10px; padding:10px 12px; margin:6px 0; border:1px solid; }
+  .alert.bad { background:var(--badbg); border-color:var(--bad); } .alert.warn { background:var(--warnbg); border-color:var(--warn); } .alert.good { background:var(--okbg); border-color:var(--ok); }
+  h2 { font-size:15px; margin:18px 0 8px; color:var(--mute); text-transform:uppercase; letter-spacing:.04em; }
+  .card { background:var(--card); border:1px solid var(--bd); border-radius:12px; overflow:hidden; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:9px 12px; border-bottom:1px solid var(--bd); vertical-align:top; }
+  th { color:var(--mute); font-weight:600; font-size:12px; text-transform:uppercase; }
+  tr:last-child td { border-bottom:0; }
+  .tablewrap { overflow-x:auto; }
+  .pill { display:inline-block; border-radius:999px; padding:2px 9px; font-size:12px; font-weight:600; }
+  .pill.ok { background:var(--okbg); color:var(--ok); } .pill.warn { background:var(--warnbg); color:var(--warn); } .pill.bad { background:var(--badbg); color:var(--bad); } .pill.mute { background:var(--bg); color:var(--mute); }
+  .empty { padding:22px; text-align:center; color:var(--mute); }
+  .login { max-width:360px; margin:15vh auto; padding:0 16px; }
+  .login input { width:100%; padding:12px; border:1px solid var(--bd); border-radius:10px; background:var(--card); color:var(--tx); font:inherit; margin:10px 0; }
+  .login .go { width:100%; padding:12px; border:0; border-radius:10px; background:var(--acc); color:#fff; font-weight:600; }
+  .err { color:var(--bad); }
+  .mono { font-variant-numeric:tabular-nums; }
+  @media (max-width:640px) { th:nth-child(n+5), td:nth-child(n+5) { display:none; } .hide-sm { display:none; } }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+const API = 'https://n8n.alchimedia.co.uk/webhook/owner-api';
+const KEY = 'owner_key', TABKEY = 'owner_tab';
+const ls = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} }, del: (k) => { try { localStorage.removeItem(k); } catch {} } };
+const $app = document.getElementById('app');
+let data = null, tab = ls.get(TABKEY) || 'resumen', loading = false, err = '', timer = null;
+const TABS = [['resumen', 'Resumen'], ['agentes', 'Agentes'], ['mudanzas', 'Mudanzas'], ['atrasados', 'Sin actualizar'], ['flujos', 'Flujos y errores']];
+const h = (t, p = {}, ...k) => { const n = Object.assign(document.createElement(t), p); n.append(...k.flat(Infinity).filter((x) => x !== null && x !== undefined && x !== false)); return n; };
+const pill = (cls, text) => h('span', { className: 'pill ' + cls, textContent: text });
+const ago = (ts) => { if (!ts) return 'nunca'; const s = Math.max(0, data.now - ts); return s < 90 ? 'hace ' + s + ' s' : s < 5400 ? 'hace ' + Math.round(s / 60) + ' min' : s < 172800 ? 'hace ' + Math.round(s / 3600) + ' h' : 'hace ' + Math.round(s / 86400) + ' d'; };
+const stageName = { new_lead: 'Nuevo', contacted: 'Contactado', quoted: 'Cotizado', quote_sent: 'Cot. enviada', send_to_calendar: 'Agendar', lead_won: 'Ganado' };
+const when = (j) => j.days_left === null ? 'sin fecha' : j.days_left === 0 ? 'HOY' : j.days_left === 1 ? 'MAÑANA' : 'en ' + j.days_left + ' días';
+
+async function load() {
+  if (loading) return; loading = true;
+  try {
+    const res = await fetch(API, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Agent-Key': ls.get(KEY) || '' }, body: JSON.stringify({ action: 'overview' }) });
+    if (res.status === 401 || res.status === 403) { ls.del(KEY); loading = false; return login(res.status === 403 ? 'Esa clave no es de administrador.' : 'Clave incorrecta.'); }
+    const j = await res.json(); if (!j.ok) throw new Error('respuesta inválida'); data = j; err = '';
+  } catch (e) { err = 'No se pudo actualizar (' + e.message + '). Mostrando el último dato.'; }
+  loading = false; render();
+}
+function login(msg = '') {
+  clearInterval(timer);
+  const input = h('input', { type: 'password', placeholder: 'Clave de administrador', autocomplete: 'off' });
+  const go = () => { if (input.value.trim()) { ls.set(KEY, input.value.trim()); start(); } };
+  input.addEventListener('keydown', (e) => e.key === 'Enter' && go());
+  $app.replaceChildren(h('div', { className: 'login' }, h('h1', { textContent: 'Consola' }), h('p', { className: 'err', textContent: msg }), input, h('button', { className: 'go', textContent: 'Entrar', onclick: go })));
+}
+function stat(label, n, cls) { return h('div', { className: 'stat ' + (n ? cls : 'ok') }, h('b', { textContent: n }), h('span', { textContent: label })); }
+function table(heads, rows, empty) { if (!rows.length) return h('div', { className: 'card' }, h('div', { className: 'empty', textContent: empty })); return h('div', { className: 'card tablewrap' }, h('table', {}, h('thead', {}, h('tr', {}, heads.map((x) => h('th', { textContent: x })))), h('tbody', {}, rows.map((r) => h('tr', {}, r.map((c) => h('td', {}, c))))))); }
+
+function vResumen() {
+  const t = data.totals;
+  return [
+    data.alerts.length ? data.alerts.map((a) => h('div', { className: 'alert ' + a.level, textContent: a.text })) : h('div', { className: 'alert good', textContent: 'Todo en orden.' }),
+    h('h2', { textContent: 'De un vistazo' }),
+    h('div', { className: 'grid' }, stat('Mudanzas hoy/mañana sin driver', t.jobs_no_driver_soon, 'bad'), stat('Errores de flujos (24 h)', t.errors_24h, 'bad'), stat('Sin asignar', t.unassigned, 'warn'), stat('Borradores del bot', t.drafts, 'warn'), stat('Seguimientos vencidos', t.overdue, 'warn'), stat('Sin cambiar de etapa 3+ d', t.stale, 'warn'), stat('Llamadas en cola', t.calls, 'warn'), stat('Ganados sin fecha/precio', t.jobs_incomplete, 'warn')),
+    h('h2', { textContent: 'Flujos programados' }), vFlows()
+  ];
+}
+function vFlows() { return table(['Flujo', 'Último latido', 'Estado'], data.flows.map((f) => [f.name, ago(f.last), pill(f.ok ? 'ok' : 'bad', f.ok ? 'late' : 'parado')]), ''); }
+function vAgentes() {
+  return [h('h2', { textContent: 'Agentes' }), table(['Agente', 'Activos', 'Vencidos', 'Sin actualizar', 'Nuevos', 'Llamadas', 'Avisos push', 'Último movimiento'], data.agents.map((a) => [
+    a.name + (a.is_supervisor ? ' (supervisor)' : ''), String(a.active), a.overdue ? pill('bad', a.overdue) : pill('ok', 0), a.stale ? pill('warn', a.stale) : pill('ok', 0), String(a.new_leads), String(a.calls_waiting), pill(a.push ? 'ok' : 'warn', a.push ? 'sí' : 'no'), ago(a.last_activity)]), 'Sin agentes.')];
+}
+function driverCell(j) { return j.incomplete ? pill('bad', 'falta fecha/precio') : j.driver ? [j.driver, h('div', { className: 'hide-sm', style: 'color:var(--mute);font-size:12px', textContent: j.driver_phone })] : pill('bad', 'SIN DRIVER'); }
+function vMudanzas() {
+  const rows = data.jobs.map((j) => [j.client, j.incomplete ? '—' : when(j) + ' · ' + j.move_date, j.price ? '£' + j.price : '—', driverCell(j), j.agent,
+    j.incomplete ? '' : [j.confirmed_t2 ? pill('ok', '2 días ✓') : pill('mute', '2 días'), ' ', j.confirmed_t1 ? pill('ok', '1 día ✓') : pill('mute', '1 día')], j.last_alert_at ? ago(j.last_alert_at) : '—']);
+  return [h('h2', { textContent: 'Mudanzas ganadas y drivers' }), table(['Cliente', 'Fecha', 'Precio', 'Driver', 'Agente', 'Confirmaciones', 'Último aviso'], rows, 'No hay mudanzas ganadas.')];
+}
+function vAtrasados() {
+  return [h('h2', { textContent: 'Leads sin cambiar de etapa (3+ días)' }), table(['Cliente', 'Agente', 'Etapa', 'Días', 'Seguimiento'], data.stale_list.map((r) => [r.client, r.agent, stageName[r.stage] || r.stage, pill(r.days >= 7 ? 'bad' : 'warn', r.days + ' d'), r.overdue ? pill('bad', 'vencido') : '']), 'Nada atrasado.')];
+}
+function vFlujos() {
+  return [h('h2', { textContent: 'Flujos programados' }), vFlows(), h('h2', { textContent: 'Errores por flujo (24 h)' }),
+    table(['Flujo', 'Veces', 'Último', 'Nodo', 'Mensaje'], data.errors_by_flow.map((e) => [e.name, pill('bad', e.count), ago(e.last), e.node, e.message]), 'Sin errores en 24 h.'),
+    h('h2', { textContent: 'Últimos errores' }), table(['Cuándo', 'Flujo', 'Nodo', 'Mensaje'], data.errors.map((e) => [ago(e.ts), e.workflow, e.node, e.message]), 'Sin errores registrados.')];
+}
+function render() {
+  if (!data) return $app.replaceChildren(h('div', { className: 'empty', textContent: 'Cargando…' }));
+  const views = { resumen: vResumen, agentes: vAgentes, mudanzas: vMudanzas, atrasados: vAtrasados, flujos: vFlujos };
+  const bad = data.alerts.some((a) => a.level === 'bad');
+  $app.replaceChildren(
+    h('header', {}, h('h1', { textContent: 'Consola' }), h('small', { textContent: 'actualizado ' + ago(data.now) }), h('button', { className: 'iconbtn', title: 'Actualizar', textContent: '⟳', onclick: () => load() }), h('button', { className: 'iconbtn', title: 'Salir', textContent: 'Salir', onclick: () => { ls.del(KEY); data = null; login(); } })),
+    h('nav', {}, TABS.map(([k, n]) => h('button', { className: k === tab ? 'on' : '', textContent: n + (k === 'resumen' && bad ? ' ●' : ''), onclick: () => { tab = k; ls.set(TABKEY, k); render(); } }))),
+    h('main', {}, err ? h('div', { className: 'alert warn', textContent: err }) : null, (views[tab] || vResumen)()));
+  document.title = (bad ? '● ' : '') + 'Consola';
+}
+function start() { if (!ls.get(KEY)) return login(); data = null; render(); load(); clearInterval(timer); timer = setInterval(() => { if (!document.hidden) load(); }, 60000); }
+document.addEventListener('visibilitychange', () => { if (!document.hidden && ls.get(KEY)) load(); });
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+start();
+</script>
+</body>
+</html>
