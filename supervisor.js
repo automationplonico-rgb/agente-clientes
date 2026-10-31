@@ -70,7 +70,7 @@
   }
 
   function resultSheet(c) {
-    const f = { result: '', note: '', ts: 0 };
+    const f = { result: '', note: '', ts: 0, date: '', price: '' };
     let paint;
     sheet('Registrar llamada · ' + (c.name || c.phone), (bg) => {
       const box = h('div');
@@ -80,14 +80,16 @@
         const note = h('textarea', { rows: 3, placeholder: f.result === 'send_quote' ? 'Qué cotización / datos debe enviar el agente' : 'Nota de la llamada', value: f.note }); note.addEventListener('input', () => { f.note = note.value; });
         box.replaceChildren(h('div', {}, h('div', { className: 'lbl', textContent: 'Resultado' }), chips,   // h() descarta los null: replaceChildren los pintaría como el texto "null"
           f.result ? h('div', { className: 'hint', textContent: HINTS[f.result] }) : null,
+          f.result === 'lead_won' ? [h('div', { className: 'lbl', textContent: 'Fecha de mudanza (obligatoria)' }), h('input', { type: 'date', value: f.date, oninput: (e) => { f.date = e.target.value; } }), h('div', { className: 'lbl', textContent: 'Precio £ (obligatorio)' }), h('input', { type: 'number', inputMode: 'decimal', min: '1', value: f.price, oninput: (e) => { f.price = e.target.value; } })] : null,
           f.result === 'follow_up' ? [h('div', { className: 'lbl', textContent: 'Volver a llamar el… (opcional)' }), when] : null,
           h('div', { className: 'lbl', textContent: 'Nota (la ve el agente en el chat)' }), note,
           err ? h('div', { className: 'hint', style: 'color:var(--err)', textContent: err }) : null,
           h('button', { className: 'btn', textContent: 'Guardar y avisar al agente', onclick: async () => {
             if (!f.result) return paint('Elige el resultado de la llamada.');
+            if (f.result === 'lead_won' && (!/^\d{4}-\d{2}-\d{2}$/.test(f.date) || !(Number(f.price) > 0))) return paint('Ganado necesita la fecha de mudanza y el precio.');
             const until = f.result === 'follow_up' ? f.ts : 0;
             if (until && until < Date.now() / 1000 + 120) return paint('La fecha tiene que ser futura.');
-            try { await api('sup_result', { conversation_id: c.conversation_id, result: f.result, note: f.note.trim(), ...(until ? { until } : {}) }, SUP_URL); bg.remove(); toast('Llamada registrada ✓ (el agente recibió el aviso)'); loadQueue(); }
+            try { await api('sup_result', { conversation_id: c.conversation_id, result: f.result, note: f.note.trim(), ...(until ? { until } : {}), ...(f.result === 'lead_won' ? { move_date: f.date, price: Number(f.price) } : {}) }, SUP_URL); bg.remove(); toast('Llamada registrada ✓ (el agente recibió el aviso)'); loadQueue(); }
             catch (e) { if (e.message !== 'auth') paint('No se pudo guardar: ' + e.message); }
           } }),
           h('button', { className: 'btn sec', textContent: 'Cerrar', onclick: () => bg.remove() })));
