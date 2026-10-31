@@ -22,7 +22,7 @@ function idbPutKey(v) {
 }
 let cfg = null;       // { stages, services, home_services, agent }
 let data = null;      // { clients }
-let tab = ['servicios', 'seguimiento', 'cola', 'panel'].includes(store.get(TAB_STORAGE)) ? store.get(TAB_STORAGE) : 'mudanzas';
+let tab = ['servicios', 'seguimiento', 'cola', 'panel', 'jobs'].includes(store.get(TAB_STORAGE)) ? store.get(TAB_STORAGE) : 'mudanzas';
 const FU_URL = API_URL.replace(/agent-api$/, 'agent-followups');
 const PUSH_URL = API_URL.replace(/agent-api$/, 'agent-push');
 const SUP_URL = API_URL.replace(/agent-api$/, 'agent-supervisor');
@@ -105,7 +105,7 @@ async function sendUpdate(payload) {
   try { await api('update', payload); return true; }
   catch (e) {
     if (e.message === 'auth') return false;
-    if (e.api) { toast('No se pudo guardar: ' + e.message, true); return false; }
+    if (e.api) { toast(e.message === 'won_requires_date_and_price' ? 'Para marcar Ganado hace falta fecha de mudanza y precio' : 'No se pudo guardar: ' + e.message, true); return false; }
     setQueue([...getQueue(), payload]); renderBanner(); return 'queued';
   }
 }
@@ -131,8 +131,8 @@ function tabsBar(counts) {
   const c = counts || { mudanzas: data.clients.filter((x) => x.group === 'mudanzas').length, servicios: data.clients.filter((x) => x.group === 'servicios').length };
   const due = fuDue().length;
   const calls = isSup && window.MVSUP ? window.MVSUP.count() : 0;
-  const names = { mudanzas: 'Mudanzas (' + c.mudanzas + ')', servicios: 'Servicios (' + c.servicios + ')', seguimiento: '⏰ Seguir' + (due ? ' (' + due + ')' : ''), cola: '📞 Llamadas' + (calls ? ' (' + calls + ')' : ''), panel: '👥 Agentes' };
-  return h('div', { className: 'tabs' }, ['mudanzas', 'servicios', 'seguimiento'].concat(isSup ? ['cola', 'panel'] : []).map((g) =>
+  const names = { mudanzas: 'Mudanzas (' + c.mudanzas + ')', servicios: 'Servicios (' + c.servicios + ')', seguimiento: '⏰ Seguir' + (due ? ' (' + due + ')' : ''), cola: '📞 Llamadas' + (calls ? ' (' + calls + ')' : ''), panel: '👥 Agentes', jobs: '🚚 Drivers' + (window.MVJOBS && window.MVJOBS.count() ? ' (' + window.MVJOBS.count() + ')' : '') };
+  return h('div', { className: 'tabs' }, ['mudanzas', 'servicios', 'jobs', 'seguimiento'].concat(isSup ? ['cola', 'panel'] : []).map((g) =>
     h('button', { className: g === tab ? 'on' : '', textContent: names[g], onclick: () => { tab = g; store.set(TAB_STORAGE, g); renderList(); } })));
 }
 
@@ -140,6 +140,7 @@ function renderList() {
   if ((tab === 'cola' || tab === 'panel') && !isSup) tab = 'mudanzas';
   if (tab === 'cola') return window.MVSUP.renderQueue();
   if (tab === 'panel') return window.MVSUP.renderPanel();
+  if (tab === 'jobs' && window.MVJOBS) return window.MVJOBS.renderJobs();
   if (tab === 'seguimiento') return renderFollowups();
   const clients = data.clients.filter((c) => c.group === tab);
   const counts = { mudanzas: data.clients.filter((c) => c.group === 'mudanzas').length, servicios: data.clients.filter((c) => c.group === 'servicios').length };
@@ -219,8 +220,16 @@ function sheetClient(sheet, bg, c) {
     const stageNow = stageOf(c);
     const lastCall = info.notes.find((n) => CALL_NOTE.test(n.text));
     const stages = h('div', { className: 'stages' }, (cfg.stages || []).map((s) => h('button', { className: stageNow && stageNow.label === s.label ? 'on' : '', textContent: s.title, onclick: async () => {
+      let extra = {};
+      if (s.label === 'lead_won') {   // Ganado exige fecha de mudanza y precio
+        const at = (info.conv && info.conv.custom_attributes) || {};
+        if (!/^\d{4}-\d{2}-\d{2}/.test(String(at.estimated_moving_date || '')) || !(Number(at.pipeline_value_quote_) > 0)) {
+          extra = await new Promise((ok) => window.MVJOBS.wonForm(at, ok));
+          if (!extra) return;
+        }
+      }
       const old = c.labels; c.labels = [...old.filter((l) => !(cfg.stages || []).some((x) => x.label === l)), s.label]; paint();
-      const r = await sendUpdate({ conversation_id: c.conversation_id, stage: s.label, ...(noteIn.value.trim() ? { note: noteIn.value.trim() } : {}) });
+      const r = await sendUpdate({ conversation_id: c.conversation_id, stage: s.label, ...(Object.keys(extra).length ? { custom_attributes: extra } : {}), ...(noteIn.value.trim() ? { note: noteIn.value.trim() } : {}) });
       if (r === false) { c.labels = old; paint(); return; }
       noteIn.value = ''; toast(r === 'queued' ? 'Sin conexión: guardado para enviar' : 'Etapa guardada ✓'); if (r === true) loadList(true);
     } })));
@@ -402,6 +411,7 @@ async function loadList(silent = false) {
   try {
     if (!cfg) cfg = await api('config');
     data = await api('mine');
+    if (window.MVJOBS && !window.__jobsOn) { window.__jobsOn = true; window.MVJOBS.start(); }
     renderList();
   } catch (e) { if (e.message !== 'auth') { toast('No se pudo cargar la lista', true); if (data) renderList(); } }
 }
