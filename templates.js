@@ -22,7 +22,7 @@
     "mv-post": "Saludo para posts (Nextdoor)",
     "mv-ask-phone": "Pedir teléfono",
     "mv-booking": "Requisitos de reserva",
-    "mv-insured": "Seguro y VAT",
+    "mv-insured": "Seguro y equipo de protección",
     "mv-review-bark": "Pedir reseña (Bark)",
     "mv-fu-1": "Seguimiento 1 · tras el primer contacto",
     "mv-fu-2": "Seguimiento 2 · planificación",
@@ -95,8 +95,7 @@
     return "In this case, we can offer you the following option:\n\n" +
       "£" + money(hourly) + " per hour (" + svc.short + ", " + money(hours) + "-hour minimum) = £" + money(base) + ".\n" + stairsText + "\n" + total + "\n\n" +
       "If more time is needed, we simply continue at £" + money(extra15) + " per additional 30 minutes, so you stay in control of the cost.\n\n" +
-      "We are fully insured for your peace of mind. Our service includes all necessary protective equipment (blankets, straps).\n" +
-      "For your convenience, VAT is already included in our pricing.";
+      "We are fully insured for your peace of mind. Our service includes all necessary protective equipment (blankets, straps).";
   }
 
   // Fecha dd/mm/aa en hora de Londres para la referencia (SALES005151026). `ts` en milisegundos.
